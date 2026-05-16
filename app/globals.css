@@ -1,26 +1,151 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+
+  /* Geist gray (dark) */
+  --bg-100: #0a0a0a;
+  --bg-200: #000000;
+  --gray-100: #1a1a1a;
+  --gray-200: #1f1f1f;
+  --gray-300: #292929;
+  --gray-400: #2e2e2e;
+  --gray-500: #454545;
+  --gray-600: #878787;
+  --gray-700: #8f8f8f;
+  --gray-800: #7d7d7d;
+  --gray-900: #a1a1a1;
+  --gray-1000: #ededed;
+
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: #2e2e2e;
+
+  --text-primary: #ededed;
+  --text-secondary: #a1a1a1;
+  --text-tertiary: #878787;
+
+  --accent: #0072f5;
+  --accent-hover: #0761d1;
+
+  --success: #62c073;
+  --error: #ff6166;
+  --warning: #f1a10d;
+  --info: #52a9ff;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--bg-100);
+  --color-foreground: var(--text-primary);
+  --color-bg: var(--bg-100);
+  --color-bg-elevated: var(--gray-100);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-error: var(--error);
+  --color-warning: var(--warning);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: var(--bg-100);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), -apple-system, ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  letter-spacing: -0.01em;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+::selection {
+  background: rgba(0, 114, 245, 0.3);
+}
+
+/* hairline divider */
+.hairline {
+  background: var(--border);
+}
+
+/* Card — flat, hairline border, no shadow */
+.card {
+  background: var(--bg-100);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.card-hover:hover {
+  border-color: var(--border-strong);
+}
+
+/* Button primary (white on black, like Vercel deploy button) */
+.btn-primary {
+  background: #ffffff;
+  color: #000000;
+  border: 1px solid #ffffff;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 14px;
+  height: 40px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.btn-primary:hover {
+  background: var(--gray-1000);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 14px;
+  height: 40px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 120ms ease;
+}
+.btn-secondary:hover {
+  background: var(--gray-100);
+}
+
+.btn-sm {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+
+/* Mono text utility */
+.mono {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+  font-feature-settings: "ss01";
+}
+
+/* Recharts overrides */
+.recharts-tooltip-wrapper {
+  outline: none !important;
+  /* Kill the slide-from-top-left animation; the tooltip should appear at
+     the cursor immediately, not transition into place. */
+  transition: none !important;
+  pointer-events: none;
+  z-index: 50;
+}
+.recharts-cartesian-axis-tick text {
+  fill: var(--text-tertiary);
+  font-size: 11px;
+  font-family: var(--font-geist-mono), monospace;
+}
+.recharts-cartesian-grid line {
+  stroke: var(--border);
 }
