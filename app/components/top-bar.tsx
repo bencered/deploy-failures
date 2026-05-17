@@ -1,14 +1,19 @@
-import Image from "next/image";
 import { AppMark } from "./app-mark";
-import { RevokeButton } from "./revoke-button";
+import {
+  UninstallDialog,
+  type InstallationSummary,
+} from "./uninstall-dialog";
 
 type Props = {
-  user: { name: string | null; image: string | null; email: string | null } | null;
+  user: {
+    username: string | null;
+    installations: InstallationSummary[];
+  } | null;
+  signInAction: () => Promise<void>;
   signOutAction: () => Promise<void>;
-  revokeAccessAction: () => Promise<void>;
 };
 
-export function TopBar({ user, signOutAction, revokeAccessAction }: Props) {
+export function TopBar({ user, signInAction, signOutAction }: Props) {
   return (
     <header className="h-12 border-b border-(--border) px-6 flex items-center">
       <div className="mx-auto max-w-[1200px] w-full flex items-center justify-between">
@@ -38,21 +43,25 @@ export function TopBar({ user, signOutAction, revokeAccessAction }: Props) {
           </a>
           {user ? (
             <>
-              {user.image ? (
-              <Image
-                src={user.image}
-                alt={user.name ?? "user"}
-                width={24}
-                height={24}
-                className="rounded-full"
-              />
-            ) : (
-              <div className="h-6 w-6 rounded-full bg-(--gray-200) border border-(--border)" />
-            )}
-            <span className="text-[13px] text-(--text-secondary) hidden sm:inline">
-              {user.email}
-            </span>
-              <RevokeButton action={revokeAccessAction} />
+              <span className="text-[13px] text-(--text-secondary) hidden sm:inline">
+                {user.username ? (
+                  <span className="mono">{user.username}</span>
+                ) : null}
+                <span className="text-(--text-tertiary) ml-2">
+                  · {user.installations.length}{" "}
+                  {user.installations.length === 1 ? "install" : "installs"}
+                </span>
+              </span>
+              <form action={signInAction}>
+                <button
+                  type="submit"
+                  className="btn-secondary btn-sm"
+                  title="Install on another personal account or team"
+                >
+                  Add another
+                </button>
+              </form>
+              <UninstallDialog installations={user.installations} />
               <form action={signOutAction}>
                 <button type="submit" className="btn-secondary btn-sm">
                   Sign out

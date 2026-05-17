@@ -1,28 +1,36 @@
 import { Suspense } from "react";
 import { auth } from "@/auth";
-import { signInWithGoogle, signOutAction, revokeAccessAction } from "./actions";
+import { signInWithVercel, signOutAction } from "./actions";
 import { TopBar } from "./components/top-bar";
 import { SignInCard } from "./components/sign-in-card";
 import { DashboardSkeleton } from "./components/dashboard";
 import { DashboardData } from "./components/dashboard-data";
 
-export default async function Page() {
+type SearchParams = Promise<{ auth_error?: string }>;
+
+export default async function Page({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
+  const { auth_error } = await searchParams;
+
+  // Strip access tokens before passing to the client.
+  const user = session
+    ? {
+        username: session.installations[0]?.username ?? null,
+        installations: session.installations.map((i) => ({
+          configurationId: i.configurationId,
+          teamId: i.teamId,
+          teamSlug: i.teamSlug,
+          username: i.username,
+        })),
+      }
+    : null;
 
   return (
     <div className="flex-1 flex flex-col">
       <TopBar
-        user={
-          session?.user
-            ? {
-                name: session.user.name ?? null,
-                image: session.user.image ?? null,
-                email: session.user.email ?? null,
-              }
-            : null
-        }
+        user={user}
+        signInAction={signInWithVercel}
         signOutAction={signOutAction}
-        revokeAccessAction={revokeAccessAction}
       />
       <main
         className={`flex-1 w-full ${
@@ -34,7 +42,7 @@ export default async function Page() {
             <DashboardData />
           </Suspense>
         ) : (
-          <SignInCard signInAction={signInWithGoogle} />
+          <SignInCard signInAction={signInWithVercel} error={auth_error} />
         )}
       </main>
     </div>

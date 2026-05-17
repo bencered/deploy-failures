@@ -18,8 +18,8 @@ import {
   startOfWeek,
   subDays,
 } from "date-fns";
-import type { DeployEvent } from "@/lib/gmail-stats";
-import { fetchEvents, signInWithGoogle } from "../actions";
+import type { DeployEvent } from "@/lib/vercel-api";
+import { fetchEvents, signInWithVercel } from "../actions";
 
 // Small enough that the user sees real data in ~2s. Covers the default 30d
 // view for typical users; the background pass fills in the rest for All.
@@ -28,7 +28,10 @@ const BACKGROUND_LIMIT = 5000;
 
 // localStorage cache key. Version-suffixed so a schema change can invalidate
 // every user's cache by bumping the number — no manual clears needed.
-const CACHE_KEY = "deploy-failures:events:v1";
+// Bumped to v2 when we migrated from Gmail events (with kind/subject/snippet)
+// to Vercel API events (with url/branch/commitSha). Old cached entries would
+// silently inflate counts on first paint, so we invalidate by version.
+const CACHE_KEY = "deploy-failures:events:v2";
 
 function loadCache(): DeployEvent[] | null {
   if (typeof window === "undefined") return null;
@@ -90,9 +93,8 @@ export function DashboardChrome({
             Deploy Failures
           </h1>
           <p className="text-[14px] text-(--text-secondary) mt-1">
-            Errors reported by{" "}
-            <span className="mono text-(--text-primary)">notifications@vercel.com</span>{" "}
-            in your inbox.
+            Failed deployments pulled directly from the{" "}
+            <span className="mono text-(--text-primary)">Vercel REST API</span>.
           </p>
         </div>
       </div>
@@ -107,21 +109,20 @@ export function Dashboard() {
   // "initial": waiting on the fast paint fetch (skeleton shown)
   // "background": initial done; still fetching the long tail
   // "done": both fetches complete
-  // "auth-expired": Gmail token bad — show re-auth banner instead of UI
+  // "auth-expired": Vercel token revoked or expired — show re-auth banner
   const [phase, setPhase] = useState<
     "initial" | "background" | "done" | "auth-expired"
   >("initial");
   const [range, setRange] = useState<Range>(30);
-  const [showDebug, setShowDebug] = useState(false);
   // null = show all projects. Otherwise, only the named category is visible
   // in the chart. Set by clicking a legend row; cleared by re-clicking the
   // same row, clicking the inline "show all" link, or clicking nothing.
   const [isolatedProject, setIsolatedProject] = useState<string | null>(null);
 
   // Single mount effect: hydrate from localStorage cache (instant paint on
-  // return visits), then always refresh from Gmail. If we have no cache, we
-  // do a small initial fetch first so we can paint quickly, then run the
-  // long-tail fetch in the background only if we capped.
+  // return visits), then always refresh from the Vercel API. If we have no
+  // cache, do a small initial fetch first so we can paint quickly, then run
+  // the long-tail fetch in the background only if we capped.
   useEffect(() => {
     let cancelled = false;
 
@@ -193,33 +194,10 @@ export function Dashboard() {
     return range > daysCovered;
   }, [loadingMore, events, range]);
 
-  // Diagnostic: log any still-unparsed events so they're inspectable from
-  // the browser console.
-  useEffect(() => {
-    const unknowns = events.filter((e) => e.kind === "unknown");
-    if (unknowns.length > 0) {
-      console.group(`[deploy-failures] ${unknowns.length} unparsed events`);
-      for (const e of unknowns.slice(0, 50)) {
-        console.log({ subject: e.subject, snippet: e.snippet, date: e.date });
-      }
-      if (unknowns.length > 50) {
-        console.log(`… and ${unknowns.length - 50} more`);
-      }
-      console.groupEnd();
-    }
-  }, [events]);
-
-  // Permission-denial emails ("Failed deployment from <user>") aren't real
-  // build failures — exclude from the failure chart/stats. They're surfaced
-  // separately in a dedicated stat card.
-  const realFailures = useMemo(
-    () => events.filter((e) => e.kind !== "permission"),
-    [events]
-  );
-  const permissionEvents = useMemo(
-    () => events.filter((e) => e.kind === "permission"),
-    [events]
-  );
+  // The Vercel API only returns real failed deployments — no permission
+  // denials or unknown-parse cases like the old Gmail path. Kept as an alias
+  // so the rest of the component reads the same.
+  const realFailures = events;
 
   const inRange = useMemo(() => {
     if (range === "all") return realFailures;
@@ -338,12 +316,11 @@ export function Dashboard() {
 
     return {
       total: realFailures.length,
-      permission: permissionEvents.length,
       topProject: topProject ? { name: topProject[0], count: topProject[1] } : null,
       topTeam: topTeam ? { name: topTeam[0], count: topTeam[1] } : null,
       lastFailure,
     };
-  }, [realFailures, permissionEvents]);
+  }, [realFailures]);
 
   // Worst days of all time: top 10 days by failure count, each with a
   // project breakdown for the stacked mini-bar. Always uses the full
@@ -417,11 +394,11 @@ export function Dashboard() {
       <DashboardChrome
         banner={
           <form
-            action={signInWithGoogle}
+            action={signInWithVercel}
             className="card p-4 flex items-center justify-between gap-4"
           >
             <div className="text-[13px]">
-              <span className="text-(--warning)">Your Google session expired.</span>{" "}
+              <span className="text-(--warning)">Your Vercel session expired.</span>{" "}
               <span className="text-(--text-secondary)">
                 Sign in again to refresh access.
               </span>
@@ -448,9 +425,7 @@ export function Dashboard() {
           hint={
             loadingMore
               ? "Loading older failures…"
-              : stats.permission > 0
-              ? `+${stats.permission} permission denials hidden`
-              : "All time, in your inbox"
+              : "All time, via Vercel API"
           }
         />
         <StatCard
@@ -648,11 +623,6 @@ export function Dashboard() {
         isolatedProject={isolatedProject}
       />
 
-      <DebugCard
-        events={events}
-        open={showDebug}
-        onToggle={() => setShowDebug((v) => !v)}
-      />
     </DashboardChrome>
   );
 }
@@ -753,103 +723,13 @@ function WorstDaysCard({
   );
 }
 
-function DebugCard({
-  events,
-  open,
-  onToggle,
-}: {
-  events: DeployEvent[];
-  open: boolean;
-  onToggle: () => void;
-}) {
-  const unknowns = events.filter((e) => e.kind === "unknown");
-  if (unknowns.length === 0) return null;
-
-  const sample = unknowns.slice(0, 20);
-  const json = JSON.stringify(
-    sample.map((e) => ({ subject: e.subject, snippet: e.snippet })),
-    null,
-    2
-  );
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(json);
-    } catch {}
-  }
-
-  return (
-    <section className="card mt-6">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full flex items-center justify-between px-6 pt-5 pb-4 border-b border-(--border) text-left"
-      >
-        <div>
-          <h2 className="text-[20px] font-semibold tracking-[-0.02em]">Debug</h2>
-          <p className="text-[12px] text-(--text-tertiary) mt-[2px]">
-            {unknowns.length} unparsed{" "}
-            {unknowns.length === 1 ? "email" : "emails"} ·{" "}
-            <span className="text-(--text-secondary)">
-              {open ? "click to collapse" : "click to expand"}
-            </span>
-          </p>
-        </div>
-        <span
-          className="mono text-[12px] text-(--text-tertiary) shrink-0"
-          aria-hidden
-        >
-          {open ? "▴" : "▾"}
-        </span>
-      </button>
-      {open ? (
-        <div className="p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-[12px] text-(--text-secondary)">
-              Showing first {sample.length} of {unknowns.length} unparsed events.
-              Snippet is the first ~150 chars of the email body — that&apos;s what
-              the regex runs against.
-            </p>
-            <button
-              type="button"
-              onClick={copy}
-              className="btn-secondary btn-sm"
-            >
-              Copy as JSON
-            </button>
-          </div>
-          <ul className="space-y-3">
-            {sample.map((e) => (
-              <li
-                key={e.id}
-                className="border border-(--border) rounded-md p-3 text-[12px]"
-              >
-                <div className="flex items-start gap-2">
-                  <span className="mono text-(--text-tertiary) shrink-0">subject:</span>
-                  <span className="text-(--text-primary) break-words">
-                    {e.subject || "(empty)"}
-                  </span>
-                </div>
-                <div className="flex items-start gap-2 mt-1">
-                  <span className="mono text-(--text-tertiary) shrink-0">snippet:</span>
-                  <span className="text-(--text-secondary) break-words">
-                    {e.snippet || "(empty)"}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 export function DashboardSkeleton() {
   return (
     <DashboardChrome>
-      {/* Stat cards — same flex row, but flex-1 stated on each card so the
-          arbitrary `[&>*]:flex-1` selector isn't load-bearing. */}
+      {/* Stat cards — flex-1/min-w-0 stated on each card explicitly here
+          since the real-dashboard `[&>*]:flex-1` selector relies on a class
+          generated from another file, and Tailwind v4's purge can be picky
+          about same-pulse-class extraction. Belt + suspenders. */}
       <div className="flex flex-row gap-4 mb-6">
         {[0, 1, 2, 3].map((i) => (
           <div key={i} className="card p-5 flex-1 min-w-0">

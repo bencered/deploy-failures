@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Deploy Failures · Vercel",
-  description: "How many times has Vercel emailed you about a failed deploy?",
+  title: "Deploy Failures",
+  description: "How often has Vercel broken your deploys?",
 };
 
 export default function RootLayout({

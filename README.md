@@ -1,44 +1,61 @@
-# vercel-fail-stats
+# deploy-failures
 
-A small Next.js app that signs into your Gmail, finds every Vercel "error deploying" email, and shows you a chart of how often Vercel has broken your day.
+Small Next.js app that signs in via Vercel OAuth, pulls every failed
+deployment from the Vercel REST API, and graphs how often they've broken
+your day. Styled after the Vercel dashboard (Geist tokens, hairline
+borders, mono IDs).
 
-Styled to mimic the Vercel dashboard (Geist tokens, hairline borders, monospace IDs).
+## One-time setup: create a Vercel integration
 
-## One-time setup: Google OAuth credentials
+1. Go to <https://vercel.com/dashboard/integrations/console> and click
+   **Create**.
+2. Fill out the form. Required fields include a name, logo (any PNG ≥ 256px),
+   a privacy policy URL, and a contact email — Vercel is more lenient about
+   real-world quality than Google but every field needs *something*.
+3. Set the **Redirect URL** to `http://localhost:3000/api/auth/vercel/callback`
+   for local dev. Add a production one (`https://<domain>/api/auth/vercel/callback`)
+   later when you deploy.
+4. Under **API Scopes** select **Read** for `deployment`, `project`, `team`,
+   and `user`. Nothing else.
+5. Save. The integration gets a **Community** badge — that means it's
+   installable from its URL (`https://vercel.com/integrations/<slug>`) but
+   not listed on the public Marketplace. No review needed.
+6. Open the integration's settings, copy the **URL Slug**, **Client ID**, and
+   **Client Secret** into `.env.local`.
 
-The app uses Google OAuth + the Gmail API. You need your own OAuth client because Gmail scopes are sensitive.
-
-1. Go to <https://console.cloud.google.com> and create (or pick) a project.
-2. **APIs & Services → Library** → enable the **Gmail API**.
-3. **APIs & Services → OAuth consent screen**:
-   - User type: **External**.
-   - Add yourself as a **Test user** (otherwise Google will block sign-in until the app is verified).
-   - Add the scope `.../auth/gmail.readonly` under **Scopes**.
-4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
-   - Application type: **Web application**.
-   - Authorized redirect URI: `http://localhost:3000/api/auth/callback/google`.
-5. Copy the client ID and secret into `.env.local`.
+Unlike Google's Gmail API, Vercel doesn't require a security assessment or
+verification process to allow internet users to install the integration.
+Anyone with the install URL can use it immediately.
 
 ## Run locally
 
 ```bash
 cp .env.example .env.local
-# fill in AUTH_SECRET (openssl rand -base64 32), AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET
+# fill in AUTH_SECRET, VERCEL_INTEGRATION_SLUG, VERCEL_CLIENT_ID, VERCEL_CLIENT_SECRET
+npm install
 npm run dev
 ```
 
-Open <http://localhost:3000>, sign in with the Google account whose inbox you want to scan.
+Open <http://localhost:3000>, click **Continue with Vercel**, install the
+integration on your personal account or a team.
 
 ## How it works
 
-- `auth.ts` — NextAuth v5 with the Google provider, requesting `gmail.readonly`. The OAuth access token is stuffed into the JWT and exposed on `session.accessToken`.
-- `app/api/stats/route.ts` — Gmail API search for `from:notifications@vercel.com subject:"error deploying"`, then a metadata fetch per message to get the date + subject. Subjects are parsed for the project name and environment.
-- `app/components/dashboard.tsx` — Client component that fetches `/api/stats` and renders a Recharts bar chart + recent-failures list.
-
-Tokens last an hour and are not refreshed automatically. Sign out and back in if you see 401s.
+- `auth.ts` — reads an HMAC-signed session cookie via `next/headers`. No
+  NextAuth, no third-party auth libraries.
+- `app/api/auth/vercel/start/route.ts` — generates a CSRF `state`, sets it
+  in a cookie, redirects to Vercel's integration install URL.
+- `app/api/auth/vercel/callback/route.ts` — validates state, exchanges the
+  code for an access token via `POST /v2/oauth/access_token`, sets the
+  signed session cookie.
+- `lib/vercel-api.ts` — paginates `GET /v6/deployments?state=ERROR` to
+  build the list the dashboard renders.
+- `app/components/dashboard.tsx` — client component. Hydrates from
+  `localStorage`, fetches fresh data via server action, renders the
+  charts, legend, and Worst Days table.
 
 ## Deploy
 
-Works on Vercel. Add the env vars in the project settings and add a production redirect URI in the Google OAuth credentials (`https://<your-domain>/api/auth/callback/google`).
-
-Also note Google will keep your OAuth app in "testing" mode until you submit for verification. For personal use this is fine — just add yourself as a test user and don't worry about it.
+Standard Vercel deploy. Add the four env vars in project settings, then add
+the production redirect URI in your integration settings:
+`https://<your-domain>/api/auth/vercel/callback`.
