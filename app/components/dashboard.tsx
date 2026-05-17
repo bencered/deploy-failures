@@ -14,7 +14,6 @@ import {
 import {
   addDays,
   format,
-  formatDistanceToNow,
   startOfDay,
   startOfWeek,
   subDays,
@@ -114,9 +113,10 @@ export function Dashboard() {
   >("initial");
   const [range, setRange] = useState<Range>(30);
   const [showDebug, setShowDebug] = useState(false);
-  const [hiddenProjects, setHiddenProjects] = useState<Set<string>>(
-    () => new Set()
-  );
+  // null = show all projects. Otherwise, only the named category is visible
+  // in the chart. Set by clicking a legend row; cleared by re-clicking the
+  // same row, clicking the inline "show all" link, or clicking nothing.
+  const [isolatedProject, setIsolatedProject] = useState<string | null>(null);
 
   // Single mount effect: hydrate from localStorage cache (instant paint on
   // return visits), then always refresh from Gmail. If we have no cache, we
@@ -248,15 +248,14 @@ export function Dashboard() {
     };
   }, [realFailures]);
 
-  // Apply legend toggles. Categories the user has clicked off are hidden
-  // from both the chart and the header count, so the visible total matches
-  // what's drawn.
+  // Apply isolation: when a project is isolated, only events that bucket
+  // to that category survive into the chart and the header count.
   const visibleEvents = useMemo(() => {
-    if (hiddenProjects.size === 0) return inRange;
+    if (!isolatedProject) return inRange;
     return inRange.filter(
-      (e) => !hiddenProjects.has(projectSeries.bucketKey(e.project))
+      (e) => projectSeries.bucketKey(e.project) === isolatedProject
     );
-  }, [inRange, hiddenProjects, projectSeries]);
+  }, [inRange, isolatedProject, projectSeries]);
 
   const buckets = useMemo(
     () => buildBuckets(visibleEvents, range, projectSeries.bucketKey),
@@ -264,8 +263,11 @@ export function Dashboard() {
   );
 
   const visibleCategories = useMemo(
-    () => projectSeries.categories.filter((c) => !hiddenProjects.has(c)),
-    [projectSeries.categories, hiddenProjects]
+    () =>
+      isolatedProject
+        ? projectSeries.categories.filter((c) => c === isolatedProject)
+        : projectSeries.categories,
+    [projectSeries.categories, isolatedProject]
   );
 
   // Per-category totals for the legend, computed from the active time
@@ -284,13 +286,8 @@ export function Dashboard() {
     });
   }, [inRange, projectSeries]);
 
-  const toggleProject = (cat: string) => {
-    setHiddenProjects((prev) => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat);
-      else next.add(cat);
-      return next;
-    });
+  const toggleIsolate = (cat: string) => {
+    setIsolatedProject((prev) => (prev === cat ? null : cat));
   };
 
   // For "All", explicitly mark which buckets start a new year — we'll use
@@ -347,6 +344,41 @@ export function Dashboard() {
       lastFailure,
     };
   }, [realFailures, permissionEvents]);
+
+  // Worst days of all time: top 10 days by failure count, each with a
+  // project breakdown for the stacked mini-bar. Always uses the full
+  // realFailures set so the range toggle doesn't affect this table —
+  // "the day Vercel broke us hardest" is a stable, all-time fact.
+  // Still respects isolation: if a project is isolated, the table narrows
+  // to that project's worst days only.
+  const worstDays = useMemo(() => {
+    const byDay = new Map<
+      string,
+      { total: number; projects: Map<string, number> }
+    >();
+    for (const e of realFailures) {
+      const cat = projectSeries.bucketKey(e.project);
+      if (isolatedProject && cat !== isolatedProject) continue;
+      const day = format(startOfDay(new Date(e.date)), "yyyy-MM-dd");
+      let entry = byDay.get(day);
+      if (!entry) {
+        entry = { total: 0, projects: new Map() };
+        byDay.set(day, entry);
+      }
+      entry.total++;
+      entry.projects.set(cat, (entry.projects.get(cat) ?? 0) + 1);
+    }
+    return [...byDay.entries()]
+      .map(([day, data]) => ({
+        day,
+        total: data.total,
+        projects: [...data.projects.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([cat, count]) => ({ cat, count })),
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
+  }, [realFailures, isolatedProject, projectSeries]);
 
   // Period-over-period trend for the Total failures card. Compares the
   // current range to the equivalent prior window. Null for "All" (no
@@ -413,7 +445,6 @@ export function Dashboard() {
         <StatCard
           label="Total failures"
           value={stats.total}
-          trend={trend}
           hint={
             loadingMore
               ? "Loading older failures…"
@@ -461,13 +492,18 @@ export function Dashboard() {
               ·{" "}
               {visibleEvents.length}{" "}
               {visibleEvents.length === 1 ? "failure" : "failures"}
-              {hiddenProjects.size > 0 ? (
+              {trend ? (
+                <span className="ml-1.5 align-middle">
+                  <TrendChip trend={trend} />
+                </span>
+              ) : null}
+              {isolatedProject ? (
                 <>
                   {" "}
                   ·{" "}
                   <button
                     type="button"
-                    onClick={() => setHiddenProjects(new Set())}
+                    onClick={() => setIsolatedProject(null)}
                     className="underline underline-offset-2 hover:text-(--text-primary)"
                   >
                     show all
@@ -526,7 +562,7 @@ export function Dashboard() {
                 )}
               />
               {projectSeries.categories.map((cat, i) => {
-                if (hiddenProjects.has(cat)) return null;
+                if (isolatedProject && cat !== isolatedProject) return null;
                 const isTop =
                   visibleCategories[visibleCategories.length - 1] === cat;
                 return (
@@ -562,7 +598,9 @@ export function Dashboard() {
         {legendRows.length > 0 ? (
           <ul className="border-t border-(--border)">
             {legendRows.map(({ cat, count, pct }, i) => {
-              const hidden = hiddenProjects.has(cat);
+              const isIsolated = isolatedProject === cat;
+              const dimmed = isolatedProject !== null && !isIsolated;
+              const color = projectSeries.colorFor(cat, i);
               return (
                 <li
                   key={cat}
@@ -570,22 +608,24 @@ export function Dashboard() {
                 >
                   <button
                     type="button"
-                    onClick={() => toggleProject(cat)}
-                    title={hidden ? `Show ${cat}` : `Hide ${cat}`}
+                    onClick={() => toggleIsolate(cat)}
+                    title={isIsolated ? `Show all projects` : `Isolate ${cat}`}
+                    style={{
+                      backgroundImage: `linear-gradient(to right, ${color} ${pct}%, transparent ${pct}%)`,
+                      backgroundSize: "100% 2px",
+                      backgroundPosition: "bottom left",
+                      backgroundRepeat: "no-repeat",
+                    }}
                     className={`w-full h-10 px-6 flex items-center gap-3 text-left hover:bg-(--gray-100) transition-colors ${
-                      hidden ? "opacity-40" : ""
-                    }`}
+                      dimmed ? "opacity-40" : ""
+                    } ${isIsolated ? "bg-(--gray-100)" : ""}`}
                   >
                     <span
                       className="h-2 w-2 rounded-full shrink-0"
-                      style={{ background: projectSeries.colorFor(cat, i) }}
+                      style={{ background: color }}
                       aria-hidden
                     />
-                    <span
-                      className={`text-[13px] text-(--text-primary) truncate min-w-0 flex-1 ${
-                        hidden ? "line-through" : ""
-                      }`}
-                    >
+                    <span className="text-[13px] text-(--text-primary) truncate min-w-0 flex-1">
                       {cat}
                     </span>
                     <span className="mono tabular-nums text-[12px] text-(--text-secondary) shrink-0">
@@ -602,85 +642,11 @@ export function Dashboard() {
         ) : null}
       </Card>
 
-      <Card>
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-(--border)">
-          <div>
-            <h2 className="text-[20px] font-semibold tracking-[-0.02em]">Recent failures</h2>
-            <p className="text-[12px] text-(--text-tertiary) mt-[2px]">
-              {realFailures.length === 0
-                ? "Nothing to show"
-                : realFailures.length <= 50
-                ? `${realFailures.length} total, newest first`
-                : `Latest 50 of ${realFailures.length} total`}
-              {permissionEvents.length > 0
-                ? ` · ${permissionEvents.length} permission denial${
-                    permissionEvents.length === 1 ? "" : "s"
-                  } hidden`
-                : ""}
-            </p>
-          </div>
-        </div>
-        <div>
-          {realFailures.length === 0 ? (
-            <div className="px-6 py-16 text-center text-[14px] text-(--text-secondary)">
-              No failure emails found.{" "}
-              <span className="text-(--success)">Nice.</span>
-            </div>
-          ) : (
-            <ul>
-              {realFailures.slice(0, 50).map((e) => (
-                <li key={e.id} className="border-b border-(--border) last:border-b-0">
-                  <a
-                    href={`https://mail.google.com/mail/#inbox/${e.threadId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-6 h-[60px] flex items-center justify-between hover:bg-(--gray-100) transition-colors"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span
-                        className="h-2 w-2 rounded-full shrink-0"
-                        style={{ background: "var(--error)" }}
-                        aria-hidden
-                      />
-                      {e.kind === "unknown" || e.project === "unknown" ? (
-                        <span
-                          className="text-[13px] text-(--text-secondary) truncate"
-                          title={e.subject}
-                        >
-                          {e.subject || "(no subject)"}
-                        </span>
-                      ) : (
-                        <>
-                          <span className="mono text-[13px] text-(--text-primary) truncate min-w-0">
-                            {e.team ? (
-                              <>
-                                <span className="text-(--text-tertiary)">{e.team}</span>
-                                <span className="text-(--text-tertiary)"> / </span>
-                              </>
-                            ) : null}
-                            {e.project}
-                          </span>
-                          {e.environment && e.environment !== "unknown" ? (
-                            <span className="mono text-[11px] text-(--text-secondary) bg-(--gray-100) border border-(--border) rounded-full px-2 py-[2px] shrink-0">
-                              {e.environment}
-                            </span>
-                          ) : null}
-                        </>
-                      )}
-                    </div>
-                    <span
-                      className="mono text-[12px] text-(--text-tertiary) tabular-nums shrink-0"
-                      suppressHydrationWarning
-                    >
-                      {formatDistanceToNow(new Date(e.date), { addSuffix: true })}
-                    </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </Card>
+      <WorstDaysCard
+        worstDays={worstDays}
+        projectSeries={projectSeries}
+        isolatedProject={isolatedProject}
+      />
 
       <DebugCard
         events={events}
@@ -688,6 +654,102 @@ export function Dashboard() {
         onToggle={() => setShowDebug((v) => !v)}
       />
     </DashboardChrome>
+  );
+}
+
+function WorstDaysCard({
+  worstDays,
+  projectSeries,
+  isolatedProject,
+}: {
+  worstDays: Array<{
+    day: string;
+    total: number;
+    projects: Array<{ cat: string; count: number }>;
+  }>;
+  projectSeries: {
+    categories: string[];
+    bucketKey: (project: string) => string;
+    colorFor: (cat: string, idx: number) => string;
+  };
+  isolatedProject: string | null;
+}) {
+  const maxTotal = worstDays[0]?.total ?? 1;
+  // Lookup so each segment is colored by the project's stable legend slot,
+  // not by its local position within the day — keeps colors consistent with
+  // the chart above.
+  const colorOf = (cat: string) => {
+    const idx = projectSeries.categories.indexOf(cat);
+    return projectSeries.colorFor(cat, idx === -1 ? 0 : idx);
+  };
+
+  return (
+    <Card>
+      <div className="px-6 pt-5 pb-4 border-b border-(--border)">
+        <h2 className="text-[20px] font-semibold tracking-[-0.02em]">
+          Worst days
+        </h2>
+        <p className="text-[12px] text-(--text-tertiary) mt-[2px]">
+          {worstDays.length === 0
+            ? "Nothing to show"
+            : `Top ${worstDays.length} ${
+                worstDays.length === 1 ? "day" : "days"
+              } by failure count, all time${
+                isolatedProject ? ` · ${isolatedProject} only` : ""
+              }`}
+        </p>
+      </div>
+      {worstDays.length === 0 ? (
+        <div className="px-6 py-16 text-center text-[14px] text-(--text-secondary)">
+          No failures in this range.{" "}
+          <span className="text-(--success)">Nice.</span>
+        </div>
+      ) : (
+        <ul>
+          {worstDays.map(({ day, total, projects }) => {
+            const date = new Date(day);
+            const barWidthPct = (total / maxTotal) * 100;
+            return (
+              <li
+                key={day}
+                className="px-6 h-[56px] flex items-center gap-4 border-b border-(--border) last:border-b-0"
+              >
+                <div className="w-[110px] shrink-0">
+                  <div className="mono text-[13px] text-(--text-primary) tabular-nums">
+                    {format(date, "MMM d, yyyy")}
+                  </div>
+                  <div className="text-[11px] text-(--text-tertiary)">
+                    {format(date, "EEEE")}
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div
+                    className="h-2 rounded-full overflow-hidden flex"
+                    style={{ width: `${barWidthPct}%` }}
+                    title={projects
+                      .map((p) => `${p.cat}: ${p.count}`)
+                      .join(" · ")}
+                  >
+                    {projects.map(({ cat, count }) => (
+                      <div
+                        key={cat}
+                        style={{
+                          flex: count,
+                          background: colorOf(cat),
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="mono tabular-nums text-[15px] font-semibold text-(--text-primary) shrink-0 w-10 text-right">
+                  {total}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
   );
 }
 
@@ -840,24 +902,29 @@ export function DashboardSkeleton() {
         </ul>
       </div>
 
-      {/* Recent failures card */}
+      {/* Worst days card */}
       <div className="card">
         <div className="px-6 pt-5 pb-4 border-b border-(--border)">
-          <div className="h-5 w-40 bg-(--gray-200) rounded animate-pulse" />
-          <div className="mt-2 h-3 w-32 bg-(--gray-100) rounded animate-pulse" />
+          <div className="h-5 w-32 bg-(--gray-200) rounded animate-pulse" />
+          <div className="mt-2 h-3 w-48 bg-(--gray-100) rounded animate-pulse" />
         </div>
         <ul>
           {[0, 1, 2, 3, 4, 5].map((i) => (
             <li
               key={i}
-              className="px-6 h-[60px] flex items-center justify-between border-b border-(--border) last:border-b-0"
+              className="px-6 h-[56px] flex items-center gap-4 border-b border-(--border) last:border-b-0"
             >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="h-2 w-2 rounded-full bg-(--gray-300) shrink-0" />
-                <div className="h-3 w-40 bg-(--gray-200) rounded animate-pulse" />
-                <div className="h-[22px] w-16 bg-(--gray-100) border border-(--border) rounded-full animate-pulse" />
+              <div className="w-[110px] shrink-0">
+                <div className="h-3 w-24 bg-(--gray-200) rounded animate-pulse" />
+                <div className="mt-1.5 h-2 w-16 bg-(--gray-100) rounded animate-pulse" />
               </div>
-              <div className="h-3 w-20 bg-(--gray-100) rounded animate-pulse shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div
+                  className="h-2 rounded-full bg-(--gray-200) animate-pulse"
+                  style={{ width: `${90 - i * 12}%` }}
+                />
+              </div>
+              <div className="h-4 w-8 bg-(--gray-200) rounded animate-pulse shrink-0" />
             </li>
           ))}
         </ul>

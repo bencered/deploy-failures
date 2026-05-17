@@ -69,11 +69,14 @@ body {
   background: var(--border);
 }
 
-/* Card — flat, hairline border, no shadow */
+/* Card — flat, hairline border, no shadow.
+   overflow: hidden so child elements (legend hairline bar, percentage fills)
+   are clipped by the rounded corners instead of bleeding past them. */
 .card {
   background: var(--bg-100);
   border: 1px solid var(--border);
   border-radius: 12px;
+  overflow: hidden;
 }
 
 .card-hover:hover {
