@@ -5,6 +5,8 @@ deployment from the Vercel REST API, and graphs how often they've broken
 your day. Styled after the Vercel dashboard (Geist tokens, hairline
 borders, mono IDs).
 
+---
+
 ## One-time setup: create a Vercel integration
 
 1. Go to <https://vercel.com/dashboard/integrations/console> and click
@@ -13,8 +15,8 @@ borders, mono IDs).
    a privacy policy URL, and a contact email — Vercel is more lenient about
    real-world quality than Google but every field needs *something*.
 3. Set the **Redirect URL** to `http://localhost:3000/api/auth/vercel/callback`
-   for local dev. Add a production one (`https://<domain>/api/auth/vercel/callback`)
-   later when you deploy.
+   for local dev. Add your production URL later: `https://<domain>/api/auth/vercel/callback`.
+   Make sure to update this in your integration settings before deploying.
 4. Under **API Scopes** select **Read** for `deployment`, `project`, `team`,
    and `user`. Nothing else.
 5. Save. The integration gets a **Community** badge — that means it's
@@ -23,11 +25,17 @@ borders, mono IDs).
 6. Open the integration's settings, copy the **URL Slug**, **Client ID**, and
    **Client Secret** into `.env.local`.
 
+---
+
 Unlike Google's Gmail API, Vercel doesn't require a security assessment or
 verification process to allow internet users to install the integration.
 Anyone with the install URL can use it immediately.
 
+---
+
 ## Run locally
+
+You can use `npm` or `yarn` if preferred.
 
 ```bash
 cp .env.example .env.local
@@ -39,10 +47,13 @@ npm run dev
 Open <http://localhost:3000>, click **Continue with Vercel**, install the
 integration on your personal account or a team.
 
+---
+
 ## How it works
 
 - `auth.ts` — reads an HMAC-signed session cookie via `next/headers`. No
-  NextAuth, no third-party auth libraries.
+  NextAuth, no third-party auth libraries. This keeps dependencies light
+  and the auth flow transparent.
 - `app/api/auth/vercel/start/route.ts` — generates a CSRF `state`, sets it
   in a cookie, redirects to Vercel's integration install URL.
 - `app/api/auth/vercel/callback/route.ts` — validates state, exchanges the
@@ -54,8 +65,17 @@ integration on your personal account or a team.
   `localStorage`, fetches fresh data via server action, renders the
   charts, legend, and Worst Days table.
 
+---
+
 ## Deploy
 
 Standard Vercel deploy. Add the four env vars in project settings, then add
-the production redirect URI in your integration settings:
-`https://<your-domain>/api/auth/vercel/callback`.
+and update the production redirect URI in your integration settings:
+
+```
+https://<your-domain>/api/auth/vercel/callback
+```
+
+---
+
+Feel free to raise issues or PRs if you find bugs or have feature ideas. Thank you!
